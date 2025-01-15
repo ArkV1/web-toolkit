@@ -3,7 +3,7 @@ from flask_socketio import SocketIO
 from app.core.config import Config
 import os
 import logging
-from logging.handlers import FileHandler
+from logging import FileHandler
 
 socketio = SocketIO(cors_allowed_origins="*", async_mode='threading')
 
@@ -68,5 +68,10 @@ def create_app(config_class=Config):
     # Register blueprints
     from app.api import bp as api_bp
     app.register_blueprint(api_bp)
+
+    # Initialize queue manager within app context
+    with app.app_context():
+        from app.services.queue_manager import queue_manager
+        queue_manager.start()
 
     return app 

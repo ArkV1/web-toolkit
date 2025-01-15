@@ -4,22 +4,36 @@ import whisper
 from app import socketio
 import traceback
 
+logger = logging.getLogger(__name__)
+
+VALID_MODELS = {
+    'tiny', 'tiny.en',
+    'base', 'base.en',
+    'small', 'small.en',
+    'medium', 'medium.en',
+    'large-v1', 'large-v2', 'large-v3', 'large',
+    'turbo'
+}
+
 class TranscriptionService:
     def __init__(self):
-        self.model = None
+        self.models = {}  # Cache for loaded models
 
-    def load_model(self):
+    def load_model(self, model_name: str):
         """Load the Whisper model if not already loaded"""
-        if self.model is None:
-            current_app.logger.info(f"Loading Whisper model: {current_app.config['WHISPER_MODEL']}")
-            self.model = whisper.load_model(current_app.config['WHISPER_MODEL'])
-            current_app.logger.info("Whisper model loaded successfully")
-        return self.model
+        if model_name not in VALID_MODELS:
+            raise ValueError(f"Invalid model name. Must be one of: {', '.join(sorted(VALID_MODELS))}")
+            
+        if model_name not in self.models:
+            current_app.logger.info(f"Loading Whisper model: {model_name}")
+            self.models[model_name] = whisper.load_model(model_name)
+            current_app.logger.info(f"Whisper model {model_name} loaded successfully")
+        return self.models[model_name]
 
-    def transcribe(self, file_path, session_id):
+    def transcribe(self, file_path: str, session_id: str, model_name: str = 'base'):
         """Transcribe audio file with progress updates"""
         try:
-            model = self.load_model()
+            model = self.load_model(model_name)
             
             # First detect the language
             current_app.logger.info("Detecting language...")
@@ -33,7 +47,7 @@ class TranscriptionService:
             self._emit_progress(0.1, session_id)
             
             # Perform transcription
-            current_app.logger.info("Starting transcription...")
+            current_app.logger.info(f"Starting transcription with {model_name} model...")
             result = model.transcribe(
                 audio,
                 verbose=True,
@@ -53,7 +67,7 @@ class TranscriptionService:
             # Re-raise the exception for the caller to handle
             raise
 
-    def _emit_progress(self, progress, session_id):
+    def _emit_progress(self, progress: float, session_id: str):
         """Emit transcription progress via Socket.IO"""
         try:
             socketio.emit(

@@ -97,20 +97,145 @@
             height: 10px;
             margin-top: 10px;
         }
+
+        .model-selector {
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .model-selector h3 {
+            margin-top: 0;
+            margin-bottom: 1rem;
+            color: #495057;
+        }
+
+        .model-dropdown {
+            width: 100%;
+            padding: 0.5rem;
+            font-size: 1rem;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background-color: white;
+            cursor: pointer;
+        }
+
+        .model-info {
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+
+        .queue-section {
+            margin-top: 2rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .queue-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+
+        .queue-item .file-info {
+            flex-grow: 1;
+            margin-right: 1rem;
+        }
+
+        .queue-item .file-name {
+            font-weight: 500;
+            color: #212529;
+        }
+
+        .queue-item .file-status {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+
+        .queue-item .model-name {
+            font-size: 0.85rem;
+            color: #495057;
+            background-color: #e9ecef;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        #drop-zone.multiple {
+            border-color: #2196f3;
+            background-color: #e3f2fd;
+        }
+
+        #drop-zone.multiple h3 {
+            color: #1976d2;
+        }
+
+        .clear-queue {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 1rem;
+        }
+
+        .clear-queue:hover {
+            background-color: #c82333;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Video Transcription</h1>
         
+        <div class="model-selector">
+            <h3>Select Whisper Model</h3>
+            <select id="model-select" class="model-dropdown">
+                <optgroup label="English-only Models (Better for English)">
+                    <option value="tiny.en">Tiny.en (~1GB VRAM, Fastest)</option>
+                    <option value="base.en">Base.en (~1GB VRAM, Fast)</option>
+                    <option value="small.en">Small.en (~2GB VRAM, Better accuracy)</option>
+                    <option value="medium.en">Medium.en (~5GB VRAM, More accurate)</option>
+                </optgroup>
+                <optgroup label="Multilingual Models">
+                    <option value="tiny">Tiny (~1GB VRAM, Fastest)</option>
+                    <option value="base">Base (~1GB VRAM, Fast)</option>
+                    <option value="small">Small (~2GB VRAM, Better accuracy)</option>
+                    <option value="medium">Medium (~5GB VRAM, More accurate)</option>
+                    <option value="large">Large (~10GB VRAM, Most accurate)</option>
+                    <option value="large-v1">Large v1 (~10GB VRAM, Legacy)</option>
+                    <option value="large-v2">Large v2 (~10GB VRAM, Legacy)</option>
+                    <option value="large-v3" selected>Large v3 (~10GB VRAM, Best accuracy)</option>
+                    <option value="turbo">Turbo (~6GB VRAM, Fast & accurate)</option>
+                </optgroup>
+            </select>
+            <p class="model-info">Select a smaller model if you experience out-of-memory errors. English-only models perform better for English content.</p>
+        </div>
+        
         <div id="drop-zone">
-            <h3>Drag and drop video/audio file here</h3>
-            <p>or click to select file</p>
-            <input type="file" id="file-input" style="display: none" accept=".mp4,.avi,.mov,.mkv,.mp3,.wav,.m4a">
+            <h3>Drag and drop video/audio files here</h3>
+            <p>or click to select files</p>
+            <input type="file" id="file-input" style="display: none" accept=".mp4,.avi,.mov,.mkv,.mp3,.wav,.m4a" multiple>
+        </div>
+
+        <div class="queue-section">
+            <h3>Processing Queue</h3>
+            <div id="queue-list"></div>
+            <button id="clear-queue" class="clear-queue" style="display: none;">Clear Queue</button>
         </div>
 
         <div class="loading" id="loading">
-            <p>Processing your file...</p>
+            <p>Processing files...</p>
             <progress></progress>
         </div>
 
@@ -125,6 +250,10 @@
         const status = document.getElementById('status');
         const result = document.getElementById('transcription-result');
         const loading = document.getElementById('loading');
+        const queueList = document.getElementById('queue-list');
+        const clearQueueBtn = document.getElementById('clear-queue');
+        
+        let fileQueue = new Map(); // Map to store file queue status
 
         // Handle drag and drop events
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -169,17 +298,46 @@
         function handleFiles(files) {
             if (files.length === 0) return;
             
-            const file = files[0];
-            uploadFile(file);
+            Array.from(files).forEach(file => {
+                const queueId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                fileQueue.set(queueId, {
+                    file,
+                    status: 'pending',
+                    model: document.getElementById('model-select').value
+                });
+                updateQueueDisplay();
+                uploadFile(file, queueId);
+            });
+
+            clearQueueBtn.style.display = 'block';
         }
 
-        function uploadFile(file) {
-            loading.classList.add('active');
-            status.textContent = 'Uploading file...';
+        function updateQueueDisplay() {
+            queueList.innerHTML = '';
+            fileQueue.forEach((item, queueId) => {
+                const queueItem = document.createElement('div');
+                queueItem.className = 'queue-item';
+                queueItem.innerHTML = `
+                    <div class="file-info">
+                        <div class="file-name">${item.file.name}</div>
+                        <div class="file-status">${item.status}</div>
+                    </div>
+                    <div class="model-name">${item.model}</div>
+                `;
+                queueList.appendChild(queueItem);
+            });
+        }
+
+        function uploadFile(file, queueId) {
+            const item = fileQueue.get(queueId);
+            item.status = 'uploading';
+            updateQueueDisplay();
             
             const formData = new FormData();
             formData.append('file', file);
             formData.append('session_id', socket.id);
+            formData.append('model', item.model);
+            formData.append('queue_id', queueId);
 
             fetch('/upload', {
                 method: 'POST',
@@ -199,15 +357,22 @@
                 if (data.error) {
                     throw new Error(data.error);
                 }
-                status.textContent = data.message;
+                item.status = 'queued';
+                updateQueueDisplay();
             })
             .catch(error => {
                 console.error('Error:', error);
-                status.textContent = `Error: ${error.message}`;
-                status.classList.add('error');
-                loading.classList.remove('active');
+                item.status = 'error: ' + error.message;
+                updateQueueDisplay();
             });
         }
+
+        clearQueueBtn.addEventListener('click', () => {
+            fileQueue.clear();
+            updateQueueDisplay();
+            clearQueueBtn.style.display = 'none';
+            result.innerHTML = '';
+        });
 
         // Socket.IO event handlers
         socket.on('connect', () => {
@@ -218,42 +383,49 @@
             status.textContent = data.message;
         });
 
+        socket.on('queue_update', (data) => {
+            if (!data.queue_id) return;
+            
+            const item = fileQueue.get(data.queue_id);
+            if (item) {
+                item.status = data.status;
+                if (data.position) {
+                    item.status += ` (position: ${data.position})`;
+                }
+                updateQueueDisplay();
+            }
+        });
+
         socket.on('transcription_complete', (data) => {
-            loading.classList.remove('active');
-            status.textContent = 'Transcription complete!';
+            if (!data.queue_id) return;
             
-            // Display full text
-            const fullText = document.createElement('div');
-            fullText.className = 'segment';
-            fullText.textContent = data.text;
-            result.appendChild(fullText);
-            
-            // Display segments with timestamps
-            data.segments.forEach(segment => {
-                const div = document.createElement('div');
-                div.className = 'segment';
-                
-                const timestamp = document.createElement('span');
-                timestamp.className = 'timestamp';
-                timestamp.textContent = `[${formatTime(segment.start)} - ${formatTime(segment.end)}] `;
-                
-                div.appendChild(timestamp);
-                div.appendChild(document.createTextNode(segment.text));
-                result.appendChild(div);
-            });
+            const item = fileQueue.get(data.queue_id);
+            if (item) {
+                item.status = 'completed';
+                item.result = data.text;
+                updateQueueDisplay();
+
+                // Add result to display
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'segment';
+                resultDiv.innerHTML = `
+                    <div class="file-name">${item.file.name}</div>
+                    <div class="model-name">${item.model}</div>
+                    <div class="transcription-text">${data.text}</div>
+                `;
+                result.appendChild(resultDiv);
+            }
         });
 
         socket.on('error', (data) => {
-            status.textContent = `Error: ${data.message}`;
-            status.classList.add('error');
-            loading.classList.remove('active');
+            if (!data.queue_id) return;
+            
+            const item = fileQueue.get(data.queue_id);
+            if (item) {
+                item.status = 'error: ' + data.message;
+                updateQueueDisplay();
+            }
         });
-
-        function formatTime(seconds) {
-            const minutes = Math.floor(seconds / 60);
-            const remainingSeconds = Math.floor(seconds % 60);
-            return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-        }
     </script>
 </body>
 </html>
