@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Transcription</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        #drop-zone {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            background-color: #fafafa;
+            transition: all 0.3s ease;
+        }
+
+        #drop-zone.dragover {
+            background-color: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+        #transcription-result {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            background-color: #fff;
+            min-height: 100px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+
+        .segment {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+
+        .segment:hover {
+            background-color: #e0e0e0;
+        }
+
+        .timestamp {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .loading {
+            display: none;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        progress {
+            width: 100%;
+            height: 10px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Video Transcription</h1>
+        
+        <div id="drop-zone">
+            <h3>Drag and drop video/audio file here</h3>
+            <p>or click to select file</p>
+            <input type="file" id="file-input" style="display: none" accept=".mp4,.avi,.mov,.mkv,.mp3,.wav,.m4a">
+        </div>
+
+        <div class="loading" id="loading">
+            <p>Processing your file...</p>
+            <progress></progress>
+        </div>
+
+        <div id="status"></div>
+        <div id="transcription-result"></div>
+    </div>
+
+    <script>
+        const socket = io();
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const status = document.getElementById('status');
+        const result = document.getElementById('transcription-result');
+        const loading = document.getElementById('loading');
+
+        // Handle drag and drop events
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            dropZone.classList.add('dragover');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('dragover');
+        }
+
+        dropZone.addEventListener('drop', handleDrop, false);
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileSelect);
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            handleFiles(files);
+        }
+
+        function handleDrop(e) {
+            const files = e.dataTransfer.files;
+            handleFiles(files);
+        }
+
+        function handleFiles(files) {
+            if (files.length === 0) return;
+            
+            const file = files[0];
+            uploadFile(file);
+        }
+
+        function uploadFile(file) {
+            loading.classList.add('active');
+            status.textContent = 'Uploading file...';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('session_id', socket.id);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(async response => {
+                const contentType = response.headers.get('content-type');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                if (contentType && contentType.includes('application/json')) {
+                    return response.json();
+                }
+                throw new TypeError("Expected JSON response but got " + contentType);
+            })
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                status.textContent = data.message;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                status.textContent = `Error: ${error.message}`;
+                status.classList.add('error');
+                loading.classList.remove('active');
+            });
+        }
+
+        // Socket.IO event handlers
+        socket.on('connect', () => {
+            console.log('Connected to server');
+        });
+
+        socket.on('status', (data) => {
+            status.textContent = data.message;
+        });
+
+        socket.on('transcription_complete', (data) => {
+            loading.classList.remove('active');
+            status.textContent = 'Transcription complete!';
+            
+            // Display full text
+            const fullText = document.createElement('div');
+            fullText.className = 'segment';
+            fullText.textContent = data.text;
+            result.appendChild(fullText);
+            
+            // Display segments with timestamps
+            data.segments.forEach(segment => {
+                const div = document.createElement('div');
+                div.className = 'segment';
+                
+                const timestamp = document.createElement('span');
+                timestamp.className = 'timestamp';
+                timestamp.textContent = `[${formatTime(segment.start)} - ${formatTime(segment.end)}] `;
+                
+                div.appendChild(timestamp);
+                div.appendChild(document.createTextNode(segment.text));
+                result.appendChild(div);
+            });
+        });
+
+        socket.on('error', (data) => {
+            status.textContent = `Error: ${data.message}`;
+            status.classList.add('error');
+            loading.classList.remove('active');
+        });
+
+        function formatTime(seconds) {
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+        }
+    </script>
+</body>
+</html>
