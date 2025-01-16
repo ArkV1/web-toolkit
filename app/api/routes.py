@@ -7,10 +7,28 @@ from app.api import bp
 from app.core.config import Config
 from app import socketio
 from app.services.queue_manager import queue_manager, VALID_MODELS
+from app.services.persistent_storage import persistent_storage
 
 @bp.route('/')
 def index():
-    return render_template('index.html')
+    queue_data = persistent_storage.get_queue()
+    results_data = persistent_storage.get_results()
+    return render_template('index.html', queue_data=queue_data, results_data=results_data)
+
+@bp.route('/clear-queue', methods=['POST'])
+def clear_queue():
+    try:
+        session_id = request.form.get('session_id')
+        if not session_id:
+            return jsonify({'error': 'No session ID provided'}), 400
+            
+        queue_manager.clear_queue(session_id)
+        return jsonify({'message': 'Queue cleared successfully'})
+        
+    except Exception as e:
+        current_app.logger.error(f"Clear queue error: {str(e)}")
+        current_app.logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
 
 @bp.route('/upload', methods=['POST'])
 def upload_file():
@@ -76,4 +94,12 @@ def upload_file():
 @socketio.on('connect')
 def handle_connect():
     current_app.logger.info(f"Client connected: {request.sid}")
-    socketio.emit('response', {'data': 'Connected'}) 
+    socketio.emit('response', {'data': 'Connected'})
+
+@socketio.on('register_client')
+def handle_client_registration(data):
+    client_id = data.get('clientId')
+    if client_id:
+        current_app.logger.info(f"Registering client ID {client_id} for socket {request.sid}")
+        # Join the client's room using their persistent ID
+        socketio.server.enter_room(request.sid, client_id) 

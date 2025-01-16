@@ -3,8 +3,12 @@ from flask import current_app
 import whisper
 from app import socketio
 import traceback
+import os
 
 logger = logging.getLogger(__name__)
+
+# Set Whisper cache directory to our persistent volume
+os.environ['XDG_CACHE_HOME'] = '/root/.cache'
 
 VALID_MODELS = {
     'tiny', 'tiny.en',
@@ -73,7 +77,7 @@ class TranscriptionService:
             socketio.emit(
                 'transcription_progress',
                 {'progress': progress * 100},
-                room=session_id
+                to=session_id
             )
         except Exception as e:
             current_app.logger.error(f"Error emitting progress: {str(e)}") 

@@ -192,6 +192,29 @@
         .clear-queue:hover {
             background-color: #c82333;
         }
+
+        .results-section {
+            margin-top: 2rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .result-item {
+            margin: 1rem 0;
+            padding: 1rem;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+
+        .result-item pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin: 0;
+            font-family: inherit;
+        }
     </style>
 </head>
 <body>
@@ -230,7 +253,19 @@
 
         <div class="queue-section">
             <h3>Processing Queue</h3>
-            <div id="queue-list"></div>
+            <div id="queue-list">
+                {% if queue_data %}
+                    {% for task in queue_data %}
+                    <div class="queue-item" data-queue-id="{{ task.queue_id }}">
+                        <div class="file-info">
+                            <div class="file-name">{{ task.file_path.split('/')[-1] }}</div>
+                            <div class="file-status">Queued</div>
+                        </div>
+                        <div class="model-name">{{ task.model_name }}</div>
+                    </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
             <button id="clear-queue" class="clear-queue" style="display: none;">Clear Queue</button>
         </div>
 
@@ -240,10 +275,28 @@
         </div>
 
         <div id="status"></div>
+        
+        {% if results_data %}
+        <div class="results-section">
+            <h3>Completed Transcriptions</h3>
+            {% for queue_id, result in results_data.items() %}
+            <div class="result-item" data-queue-id="{{ queue_id }}">
+                <div class="transcription-result">
+                    <pre>{{ result }}</pre>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
         <div id="transcription-result"></div>
     </div>
 
     <script>
+        // Generate a persistent client ID if not exists
+        const clientId = localStorage.getItem('clientId') || `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        localStorage.setItem('clientId', clientId);
+        
         const socket = io();
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('file-input');
@@ -254,6 +307,18 @@
         const clearQueueBtn = document.getElementById('clear-queue');
         
         let fileQueue = new Map(); // Map to store file queue status
+
+        // Initialize fileQueue with server-side data
+        {% if queue_data %}
+            {% for task in queue_data %}
+                fileQueue.set("{{ task.queue_id }}", {
+                    file: { name: "{{ task.file_path.split('/')[-1] }}" },
+                    status: 'queued',
+                    model: "{{ task.model_name }}"
+                });
+            {% endfor %}
+            if (clearQueueBtn) clearQueueBtn.style.display = 'block';
+        {% endif %}
 
         // Handle drag and drop events
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -308,12 +373,12 @@
                 updateQueueDisplay();
                 uploadFile(file, queueId);
             });
-
-            clearQueueBtn.style.display = 'block';
         }
 
         function updateQueueDisplay() {
             queueList.innerHTML = '';
+            const hasItems = fileQueue.size > 0;
+            
             fileQueue.forEach((item, queueId) => {
                 const queueItem = document.createElement('div');
                 queueItem.className = 'queue-item';
@@ -326,6 +391,10 @@
                 `;
                 queueList.appendChild(queueItem);
             });
+
+            if (clearQueueBtn) {
+                clearQueueBtn.style.display = hasItems ? 'block' : 'none';
+            }
         }
 
         function uploadFile(file, queueId) {
@@ -335,7 +404,7 @@
             
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('session_id', socket.id);
+            formData.append('session_id', clientId);
             formData.append('model', item.model);
             formData.append('queue_id', queueId);
 
@@ -367,20 +436,51 @@
             });
         }
 
-        clearQueueBtn.addEventListener('click', () => {
-            fileQueue.clear();
-            updateQueueDisplay();
-            clearQueueBtn.style.display = 'none';
-            result.innerHTML = '';
-        });
+        // Add event listener for clear queue button only if it exists
+        if (clearQueueBtn) {
+            clearQueueBtn.addEventListener('click', () => {
+                const formData = new FormData();
+                formData.append('session_id', clientId);
+                
+                fetch('/clear-queue', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    fileQueue.clear();
+                    updateQueueDisplay();
+                    result.innerHTML = '';
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Failed to clear queue: ' + error.message);
+                });
+            });
+        }
 
         // Socket.IO event handlers
         socket.on('connect', () => {
             console.log('Connected to server');
+            // Send the clientId to the server on connection
+            socket.emit('register_client', { clientId: clientId });
         });
 
         socket.on('status', (data) => {
             status.textContent = data.message;
+        });
+
+        socket.on('task_cancelled', (data) => {
+            if (!data.queue_id) return;
+            
+            const item = fileQueue.get(data.queue_id);
+            if (item) {
+                item.status = 'cancelled';
+                updateQueueDisplay();
+            }
         });
 
         socket.on('queue_update', (data) => {

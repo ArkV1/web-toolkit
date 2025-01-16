@@ -12,6 +12,7 @@ services:
       - ./wsgi.py:/app/wsgi.py
       - ./uploads:/app/uploads
       - ./logs:/app/logs
+      - ./whisper_models:/root/.cache/whisper
     environment:
       - FLASK_APP=wsgi.py
       - FLASK_DEBUG=1
@@ -31,10 +32,10 @@ services:
       resources:
         limits:
           cpus: '4'
-          memory: 8G
+          memory: 12G
         reservations:
-          cpus: '1'
-          memory: 2G
+          cpus: '2'
+          memory: 4G
     logging:
       driver: "json-file"
       options:
